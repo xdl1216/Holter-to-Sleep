@@ -27,7 +27,7 @@ def save_data_splits(data_directories, base_path, seed, split_data, max_samples_
             npz_file_paths = npz_file_paths[:max_samples_per_dataset]
         
         if split_data:
-            train, test = train_test_split(npz_file_paths, test_size=0.3, random_state=seed)
+            train, test = train_test_split(npz_file_paths, test_size=0.4, random_state=seed)
             val, test = train_test_split(test, test_size=0.5, random_state=seed)
             
             train_paths.extend(train)
