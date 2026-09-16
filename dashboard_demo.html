@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sleep & Cardiac Analysis Report</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        :root {
+            --primary-col: #2c3e50;
+            --accent-col: #3498db;
+            --bg-col: #f0f2f5;
+            --card-bg: #ffffff;
+        }
+        body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-col); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; background: var(--card-bg); padding: 40px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
+
+        header { text-align: center; margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 20px; }
+        h1 { margin: 0; font-size: 26px; color: var(--primary-col); }
+        .sub-meta { color: #7f8c8d; font-size: 14px; margin-top: 5px; }
+
+        .control-box { background: #eef2f5; padding: 15px; border-radius: 6px; margin-bottom: 40px; display: flex; flex-direction: column; gap: 10px; }
+        .btn-row { display: flex; gap: 10px; align-items: center; }
+        .file-btn { background: var(--accent-col); color: white; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .action-btn { background: #27ae60; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 14px; }
+        .action-btn:disabled { background: #bdc3c7; cursor: not-allowed; }
+        #log-window { background: #2d3436; color: #00ff00; font-family: monospace; padding: 10px; border-radius: 4px; height: 100px; overflow-y: auto; font-size: 12px; display: none; white-space: pre-wrap; }
+
+        .chart-section { margin-bottom: 40px; }
+        .chart-header { font-size: 16px; font-weight: bold; border-left: 4px solid var(--accent-col); padding-left: 10px; margin-bottom: 15px; color: var(--primary-col); }
+        .chart-container { border: 1px solid #eee; border-radius: 4px; padding: 5px; background: #fff; }
+
+        .metrics-wrapper { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px; }
+        .metrics-panel { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.03); }
+        .panel-header { padding: 15px; font-weight: bold; color: #fff; font-size: 16px; display: flex; align-items: center; gap: 10px; }
+        .panel-header.sleep { background: #a13bcd; }
+        .panel-header.cardiac { background: #51bcbc; }
+
+        .metrics-list { padding: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+        .metric-item { display: flex; flex-direction: column; }
+        .m-label { font-size: 12px; color: #7f8c8d; margin-bottom: 2px; }
+        .m-value { font-size: 18px; font-weight: 600; color: var(--primary-col); }
+        .m-unit { font-size: 12px; color: #95a5a6; font-weight: normal; margin-left: 2px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1 id="main-title">Sleep & Cardiac Analysis Report</h1>
+        <div class="sub-meta" id="file-meta">Waiting for file...</div>
+    </header>
+
+    <div class="control-box">
+        <div class="btn-row">
+            <label for="fileInput" class="file-btn">📂 Select EDF</label>
+            <input type="file" id="fileInput" accept=".edf" style="display:none">
+            <span id="fileNameDisplay" style="flex-grow:1; color:#666; font-size:14px;"></span>
+            <button id="analyzeBtn" class="action-btn" onclick="runAnalysis()" disabled>Start Analysis</button>
+        </div>
+        <div id="log-window"></div>
+    </div>
+
+    <div id="report-content" style="display:none;">
+
+        <div class="chart-section">
+            <div class="chart-header">ECG</div>
+            <div id="ecg-chart" class="chart-container" style="height: 200px;"></div>
+        </div>
+
+        <div class="chart-section">
+            <div class="chart-header">Sleep Staging</div>
+            <div id="hypno-chart" class="chart-container" style="height: 180px;"></div>
+        </div>
+
+        <div class="metrics-wrapper">
+            <div class="metrics-panel">
+                <div class="panel-header sleep">🌙 Sleep Metrics</div>
+                <div class="metrics-list" id="sleep-metrics-list"></div>
+            </div>
+            <div class="metrics-panel">
+                <div class="panel-header cardiac">❤️ Cardiac Metrics</div>
+                <div class="metrics-list" id="cardiac-metrics-list"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let selectedFile = null;
+    let chartECG = null;
+    let chartHypno = null;
+
+    const elFile = document.getElementById('fileInput');
+    const elBtn = document.getElementById('analyzeBtn');
+    const elName = document.getElementById('fileNameDisplay');
+    const elLog = document.getElementById('log-window');
+    const elReport = document.getElementById('report-content');
+    const elTitle = document.getElementById('main-title');
+    const elMeta = document.getElementById('file-meta');
+
+    elFile.addEventListener('change', (e) => {
+        if (e.target.files[0]) {
+            selectedFile = e.target.files[0];
+            elName.innerText = selectedFile.name;
+            elBtn.disabled = false;
+        }
+    });
+
+    async function runAnalysis() {
+        if (!selectedFile) return;
+        elBtn.disabled = true;
+        elReport.style.display = 'none';
+        elLog.style.display = 'block';
+        elLog.innerHTML = '> Preparing upload...<br>';
+
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+
+        try {
+            const response = await fetch('/analyze', { method: 'POST', body: formData });
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                let lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const cleanLine = line.replace(/:\s*NaN/g, ': null');
+                        const msg = JSON.parse(cleanLine);
+
+                        if (msg.type === 'log') {
+                            elLog.innerHTML += `> ${msg.content}<br>`;
+                            elLog.scrollTop = elLog.scrollHeight;
+                        } else if (msg.type === 'result') {
+                            elLog.innerHTML += `> SUCCESS! Rendering report...<br>`;
+                            renderReport(msg.data, selectedFile.name);
+                        } else if (msg.type === 'error') {
+                            elLog.innerHTML += `<span style="color:red">> ERROR: ${msg.content}</span><br>`;
+                        }
+                    } catch (e) {
+                        console.warn("JSON parse error (ignored):", line);
+                    }
+                }
+            }
+        } catch (err) {
+            elLog.innerHTML += `<span style="color:red">Network Error: ${err.message}</span>`;
+        } finally {
+            elBtn.disabled = false;
+        }
+    }
+
+    function renderReport(data, filename) {
+        elReport.style.display = 'block';
+        elTitle.innerText = `${filename} - Analysis Report`;
+        elMeta.innerText = `Analyzed on: ${data.file_info.analysis_time}`;
+
+        const sm = data.sleep_analysis.metrics;
+        const se = data.sleep_analysis.events;
+        const ca = data.cardiac_analysis || {};
+
+        const mkItem = (label, val, unit='') => `
+            <div class="metric-item">
+                <div class="m-label">${label}</div>
+                <div class="m-value">${val === null || val === undefined ? '-' : val}<span class="m-unit">${unit}</span></div>
+            </div>`;
+
+        document.getElementById('sleep-metrics-list').innerHTML = `
+            ${mkItem('Total Recording', sm.TRT_hours, 'h')}
+            ${mkItem('Total Sleep', sm.TST_hours, 'h')}
+            ${mkItem('Sleep Efficiency', sm.Sleep_Efficiency_percent, '%')}
+            ${mkItem('Wake Ratio', sm.Wake_ratio, '%')}
+            ${mkItem('Light Sleep', sm.Light_sleep_ratio, '%')}
+            ${mkItem('Deep Sleep', sm.Deep_sleep_ratio, '%')}
+            ${mkItem('REM Ratio', sm.REM_ratio, '%')}
+            ${mkItem('AHI (Apnea)', se.AHI)}
+            ${mkItem('ArI (Arousal)', se.ArI)}
+        `;
+
+        document.getElementById('cardiac-metrics-list').innerHTML = `
+            ${mkItem('Avg Heart Rate', ca.avg_hr, 'bpm')}
+            ${mkItem('Min / Max HR', `${ca.min_hr || '-'} / ${ca.max_hr || '-'}`, 'bpm')}
+            ${mkItem('Total PAC', ca.total_pac)}
+            ${mkItem('Total PVC', ca.total_pvc)}
+            ${mkItem('AF Events', ca.total_af)}
+            ${mkItem('SVT Events', ca.total_svt)}
+            ${mkItem('VT Events', ca.total_vt)}
+            ${mkItem('SDNN', ca.SDNN, 'ms')}
+            ${mkItem('SDANN', ca.SDANN, 'ms')}
+            ${mkItem('RMSSD', ca.rmssd, 'ms')}
+            ${mkItem('pNN50', ca.pNN50)}
+            ${mkItem('LF Power', ca.LF)}
+            ${mkItem('HF Power', ca.HF)}
+            ${mkItem('LF/HF Ratio', ca['LF/HF'])}
+        `;
+
+        const ecgRaw = data.visualization_data.ecg_trend;
+        const fs = data.visualization_data.sampling_rate;
+        const ecgData = ecgRaw.map((v, i) => [i / fs, v]);
+        const maxTime = ecgData[ecgData.length-1][0];
+
+        const hypnoRaw = data.sleep_analysis.hypnogram;
+        const mapY = (s) => {
+            if (s===0) return 3; // W
+            if (s===4) return 2; // REM
+            if (s===1 || s===2) return 1; // Light (N1+N2)
+            return 0; // Deep (N3)
+        };
+
+        const segments = [];
+        let startIdx = 0;
+        let currentStage = mapY(hypnoRaw[0]);
+
+        for (let i = 1; i < hypnoRaw.length; i++) {
+            const nextStage = mapY(hypnoRaw[i]);
+            if (nextStage !== currentStage) {
+                segments.push([startIdx * 30, i * 30, currentStage]);
+                currentStage = nextStage;
+                startIdx = i;
+            }
+        }
+        segments.push([startIdx * 30, hypnoRaw.length * 30, currentStage]);
+
+        drawECG(ecgData, maxTime);
+        drawHypno(segments, maxTime);
+
+        echarts.connect([chartECG, chartHypno]);
+        window.onresize = () => { chartECG?.resize(); chartHypno?.resize(); };
+    }
+
+    function drawECG(data, maxTime) {
+        if (chartECG) chartECG.dispose();
+        chartECG = echarts.init(document.getElementById('ecg-chart'));
+
+        chartECG.setOption({
+            animation: false,
+            grid: { left: 50, right: 30, top: 20, bottom: 20 },
+            tooltip: { trigger: 'axis', axisPointer: { type: 'line' } },
+            xAxis: { type: 'value', min: 0, max: maxTime, show: false },
+            yAxis: {
+                type: 'value', scale: true,
+                splitLine: { show: true, lineStyle: { color: '#ffebee', width: 0.8 } },
+                minorSplitLine: { show: true, lineStyle: { color: '#fff5f5' } },
+                axisLabel: { fontSize: 10, color: '#999' }
+            },
+            series: [{
+                type: 'line',
+                data: data,
+                showSymbol: false,
+                lineStyle: { color: '#c0392b', width: 0.6 },
+                large: true
+            }]
+        });
+    }
+
+    function drawHypno(segments, maxTime) {
+        if (chartHypno) chartHypno.dispose();
+        chartHypno = echarts.init(document.getElementById('hypno-chart'));
+
+        const categories = ['Deep', 'Light', 'REM', 'Wake'];
+        const colors = ['#1f2a44', '#3498db', '#e67e22', '#9b59b6'];
+
+        function renderGanttItem(params, api) {
+            const categoryIndex = api.value(2);
+            const start = api.coord([api.value(0), categoryIndex]);
+            const end = api.coord([api.value(1), categoryIndex]);
+            const height = api.size([0, 1])[1] * 0.6;
+
+            const rectShape = echarts.graphic.clipRectByRect({
+                x: start[0],
+                y: start[1] - height / 2,
+                width: end[0] - start[0],
+                height: height
+            }, {
+                x: params.coordSys.x,
+                y: params.coordSys.y,
+                width: params.coordSys.width,
+                height: params.coordSys.height
+            });
+
+            return rectShape && {
+                type: 'rect',
+                transition: ['shape'],
+                shape: {
+                    x: rectShape.x,
+                    y: rectShape.y,
+                    width: rectShape.width,
+                    height: rectShape.height,
+                    r: 3
+                },
+                style: api.style({ fill: colors[categoryIndex] })
+            };
+        }
+
+        chartHypno.setOption({
+            grid: { left: 50, right: 30, top: 10, bottom: 30 },
+            tooltip: {
+                formatter: params => {
+                    const hStart = Math.floor(params.value[0]/3600);
+                    const mStart = Math.floor((params.value[0]%3600)/60);
+                    const hEnd = Math.floor(params.value[1]/3600);
+                    const mEnd = Math.floor((params.value[1]%3600)/60);
+                    const stage = categories[params.value[2]];
+                    return `<b>${stage}</b><br/>${hStart}:${mStart} - ${hEnd}:${mEnd}`;
+                }
+            },
+            xAxis: {
+                type: 'value', min: 0, max: maxTime,
+                axisLabel: { formatter: v => Math.floor(v/3600) + 'h' },
+                splitLine: { show: false }
+            },
+            yAxis: {
+                type: 'category',
+                data: categories,
+                splitLine: { show: true, lineStyle: { type: 'dashed', opacity: 0.3 } },
+                axisTick: { show: false },
+                axisLine: { show: false }
+            },
+            series: [{
+                type: 'custom',
+                renderItem: renderGanttItem,
+                itemStyle: { opacity: 0.8 },
+                encode: { x: [0, 1], y: 2 },
+                data: segments
+            }]
+        });
+    }
+</script>
+
+</body>
+</html>
